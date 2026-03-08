@@ -4,6 +4,7 @@
 # База данных
 *.db
 *.sqlite3
+wb_monitor.db
 
 # Python
 __pycache__/
