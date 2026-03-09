@@ -41,6 +41,7 @@ class TrackedItem(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     article: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
+    platform: Mapped[str | None] = mapped_column(String(16), nullable=True, default="wb")
     last_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     target_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     notify_any_drop: Mapped[bool] = mapped_column(Boolean, default=True)

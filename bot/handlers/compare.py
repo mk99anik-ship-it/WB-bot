@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 from bot.keyboards.inline import main_menu_kb, back_to_main_kb
 from core.models import User
-from services.wb_parser import fetch_product, extract_article, WBProduct
+from services.wb_parser import fetch_product, detect_platform, PLATFORM_NAME, PLATFORM_EMOJI, WBProduct
 
 router = Router()
 
@@ -126,15 +126,16 @@ async def cb_compare_start(callback: CallbackQuery, state: FSMContext, db_user: 
 
 @router.message(CompareFSM.collecting)
 async def process_compare_item(message: Message, state: FSMContext) -> None:
-    article = extract_article(message.text.strip() if message.text else "")
-    if not article:
+    detected = detect_platform(message.text.strip() if message.text else "")
+    if not detected:
         await message.answer(
-            "❌ Не удалось распознать ссылку или артикул.\n"
-            "Отправь ссылку на WB или числовой артикул.",
+            "❌ Не удалось распознать ссылку.\n"
+            "Отправь ссылку WB, Ozon, AliExpress или артикул WB.",
             reply_markup=_compare_kb(0),
         )
         return
 
+    platform, article = detected
     data = await state.get_data()
     items: list[dict] = data.get("products", [])
     limit: int = data.get("limit", FREE_LIMIT)
@@ -143,11 +144,18 @@ async def process_compare_item(message: Message, state: FSMContext) -> None:
         await message.answer("ℹ️ Этот товар уже есть в списке сравнения.")
         return
 
-    wait_msg = await message.answer("⏳ Загружаю товар…")
-    product = await fetch_product(article)
+    emoji = PLATFORM_EMOJI.get(platform, "")
+    pname = PLATFORM_NAME.get(platform, platform)
+    if platform in ("ozon", "ali"):
+        await message.answer(
+            f"⚠️ <b>{pname}</b> — экспериментальная поддержка, возможны сбои.",
+            parse_mode="HTML",
+        )
+    wait_msg = await message.answer(f"⏳ Загружаю товар с {emoji} {pname}…")
+    product = await fetch_product(article, platform)
     if product is None:
         await wait_msg.edit_text(
-            "❌ Товар не найден на Wildberries. Попробуй другой артикул."
+            f"❌ Товар не найден на {pname}. Попробуй другую ссылку."
         )
         return
 
@@ -156,6 +164,7 @@ async def process_compare_item(message: Message, state: FSMContext) -> None:
         "name": product.name,
         "price": product.price,
         "url": product.url,
+        "platform": product.platform,
         "price_original": product.price_original,
         "brand": product.brand,
         "supplier": product.supplier,

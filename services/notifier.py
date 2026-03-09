@@ -10,9 +10,11 @@ async def notify_price_drop(
     old_price: float,
     new_price: float,
     target_price: float | None,
+    url: str | None = None,
 ) -> None:
     drop_pct = round((old_price - new_price) / old_price * 100, 1)
-    url = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
+    if not url:
+        url = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
 
     text = (
         f"🔔 <b>Снижение цены!</b>\n\n"

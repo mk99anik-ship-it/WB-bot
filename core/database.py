@@ -14,6 +14,7 @@ async def init_db() -> None:
         for sql in [
             "ALTER TABLE users ADD COLUMN digest_hour INTEGER",
             "ALTER TABLE users ADD COLUMN digest_minute INTEGER",
+            "ALTER TABLE tracked_items ADD COLUMN platform VARCHAR(16) DEFAULT 'wb'",
         ]:
             try:
                 await conn.execute(text(sql))

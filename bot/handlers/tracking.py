@@ -11,7 +11,7 @@ from bot.keyboards.inline import (
 from core.config import config
 from core.database import AsyncSessionLocal
 from core.models import TrackedItem, User
-from services.wb_parser import fetch_product, extract_article
+from services.wb_parser import fetch_product, detect_platform, product_url, PLATFORM_NAME, PLATFORM_EMOJI
 
 router = Router()
 
@@ -32,11 +32,16 @@ class SetTargetFSM(StatesGroup):
 async def start_add_item(event: Message | CallbackQuery, state: FSMContext, db_user: User) -> None:
     await state.set_state(AddItemFSM.waiting_for_url)
     text = (
-        "🔗 <b>Отправь ссылку на товар или его артикул:</b>\n\n"
-        "Пример ссылки:\n"
-        "<code>https://www.wildberries.ru/catalog/123456789/detail.aspx</code>\n\n"
-        "Или просто артикул:\n"
-        "<code>123456789</code>"
+        "🔗 <b>Отправь ссылку на товар:</b>\n\n"
+        "Поддерживаются:\n"
+        "🟣 Wildberries — ссылка или артикул\n"
+        "🔵 Ozon — ссылка на товар\n"
+        "🟠 AliExpress — ссылка на товар\n\n"
+        "Примеры:\n"
+        "<code>https://www.wildberries.ru/catalog/123456789/detail.aspx</code>\n"
+        "<code>https://www.ozon.ru/product/nazvanie-123456789/</code>\n"
+        "<code>https://aliexpress.ru/item/1005001234567890.html</code>\n"
+        "<code>123456789</code>  ← артикул WB"
     )
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_main_kb())
@@ -47,13 +52,27 @@ async def start_add_item(event: Message | CallbackQuery, state: FSMContext, db_u
 
 @router.message(AddItemFSM.waiting_for_url)
 async def process_item_url(message: Message, state: FSMContext, db_user: User) -> None:
-    article = extract_article(message.text.strip())
-    if not article:
+    detected = detect_platform(message.text.strip())
+    if not detected:
         await message.answer(
-            "❌ Не удалось распознать ссылку или артикул. Попробуй ещё раз.",
+            "❌ Не удалось распознать ссылку.\n\n"
+            "Поддерживаются ссылки Wildberries, Ozon, AliExpress или артикул WB (число).",
             reply_markup=back_to_main_kb(),
         )
         return
+
+    platform, article = detected
+
+    # Предупреждение для экспериментальных платформ
+    if platform in ("ozon", "ali"):
+        pname = PLATFORM_NAME.get(platform, platform)
+        await message.answer(
+            f"⚠️ <b>Внимание:</b> поддержка {pname} — экспериментальная.\n"
+            f"Работа может быть нестабильной: иногда товар не находится или цена определяется неверно.\n"
+            f"Wildberries работает надёжно через официальное API.\n\n"
+            f"⏳ Пробую загрузить товар…",
+            parse_mode="HTML",
+        )
 
     # Проверяем лимит
     async with AsyncSessionLocal() as session:
@@ -77,28 +96,35 @@ async def process_item_url(message: Message, state: FSMContext, db_user: User) -
         dup = next((i for i in existing_items if i.article == article), None)
         if dup:
             await message.answer(
-                f"ℹ️ Товар с артикулом <b>{article}</b> уже отслеживается.",
+                f"ℹ️ Этот товар уже отслеживается.",
                 parse_mode="HTML",
                 reply_markup=main_menu_kb(),
             )
             await state.clear()
             return
 
-    await message.answer("⏳ Загружаю информацию о товаре...")
+    emoji = PLATFORM_EMOJI.get(platform, "")
+    pname = PLATFORM_NAME.get(platform, platform)
+    if platform not in ("ozon", "ali"):
+        await message.answer(f"⏳ Загружаю товар с {emoji} {pname}...")
 
-    product = await fetch_product(article)
+    product = await fetch_product(article, platform)
     if product is None:
         await message.answer(
-            "❌ Не удалось найти товар на Wildberries. Проверь артикул и попробуй снова.",
+            f"❌ Не удалось получить данные о товаре.\n"
+            f"Проверь ссылку и попробуй снова.",
             reply_markup=back_to_main_kb(),
         )
         return
 
-    await state.update_data(article=article, name=product.name, price=product.price)
+    await state.update_data(
+        article=article, platform=platform,
+        name=product.name, price=product.price, url=product.url,
+    )
     await state.set_state(AddItemFSM.waiting_for_target_price)
 
     await message.answer(
-        f"✅ Найден товар:\n\n"
+        f"✅ Найден товар {emoji}:\n\n"
         f"📦 <b>{product.name}</b>\n"
         f"💰 Цена: <b>{product.price:.0f} ₽</b>\n\n"
         f"🎯 Установи целевую цену (я уведомлю, когда цена упадёт до неё).\n"
@@ -124,6 +150,7 @@ async def process_target_price(message: Message, state: FSMContext, db_user: Use
         item = TrackedItem(
             user_id=db_user.id,
             article=data["article"],
+            platform=data.get("platform", "wb"),
             name=data["name"],
             last_price=data["price"],
             target_price=target_price,
@@ -188,13 +215,16 @@ async def item_info(callback: CallbackQuery, db_user: User) -> None:
         await callback.answer("Товар не найден", show_alert=True)
         return
 
-    url = f"https://www.wildberries.ru/catalog/{item.article}/detail.aspx"
+    item_platform = item.platform or "wb"
+    url = product_url(item.article, item_platform)
+    pname = PLATFORM_NAME.get(item_platform, "магазине")
+    emoji = PLATFORM_EMOJI.get(item_platform, "")
     price_str = f"{item.last_price:,.0f} ₽" if item.last_price else "—"
     target_str = f"\n🎯 Цель: {item.target_price:,.0f} ₽" if item.target_price else ""
     await callback.message.edit_text(
-        f"📦 <b>{item.name}</b>\n"
+        f"{emoji} <b>{item.name}</b>\n"
         f"💰 Цена: {price_str}{target_str}\n"
-        f"🔗 <a href='{url}'>Открыть на Wildberries</a>",
+        f"🔗 <a href='{url}'>Открыть на {pname}</a>",
         parse_mode="HTML",
         disable_web_page_preview=True,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[

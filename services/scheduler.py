@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from core.database import AsyncSessionLocal
 from core.models import TrackedItem, PriceHistory, User
-from services.wb_parser import fetch_product
+from services.wb_parser import fetch_product, PLATFORM_WB
 from services.notifier import notify_price_drop, notify_admin
 from core.config import config
 
@@ -51,7 +51,7 @@ async def check_prices(bot) -> None:
             if elapsed < interval_minutes:
                 continue  # Ещё не время проверять
 
-        product = await fetch_product(item.article)
+        product = await fetch_product(item.article, item.platform or PLATFORM_WB)
         if product is None:
             logger.warning(f"Не удалось получить данные для артикула {item.article}")
             continue
@@ -86,6 +86,7 @@ async def check_prices(bot) -> None:
                     old_price=old_price,
                     new_price=new_price,
                     target_price=item.target_price,
+                    url=product.url,
                 )
                 notified += 1
 
