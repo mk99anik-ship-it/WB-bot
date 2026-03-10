@@ -130,7 +130,7 @@ async def process_compare_item(message: Message, state: FSMContext) -> None:
     if not detected:
         await message.answer(
             "❌ Не удалось распознать ссылку.\n"
-            "Отправь ссылку WB, Ozon, AliExpress или артикул WB.",
+            "Отправь ссылку WB или артикул (число).",
             reply_markup=_compare_kb(0),
         )
         return
@@ -146,11 +146,6 @@ async def process_compare_item(message: Message, state: FSMContext) -> None:
 
     emoji = PLATFORM_EMOJI.get(platform, "")
     pname = PLATFORM_NAME.get(platform, platform)
-    if platform in ("ozon", "ali"):
-        await message.answer(
-            f"⚠️ <b>{pname}</b> — экспериментальная поддержка, возможны сбои.",
-            parse_mode="HTML",
-        )
     wait_msg = await message.answer(f"⏳ Загружаю товар с {emoji} {pname}…")
     product = await fetch_product(article, platform)
     if product is None:

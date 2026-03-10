@@ -32,16 +32,11 @@ class SetTargetFSM(StatesGroup):
 async def start_add_item(event: Message | CallbackQuery, state: FSMContext, db_user: User) -> None:
     await state.set_state(AddItemFSM.waiting_for_url)
     text = (
-        "🔗 <b>Отправь ссылку на товар:</b>\n\n"
-        "Поддерживаются:\n"
-        "🟣 Wildberries — ссылка или артикул\n"
-        "🔵 Ozon — ссылка на товар\n"
-        "🟠 AliExpress — ссылка на товар\n\n"
-        "Примеры:\n"
-        "<code>https://www.wildberries.ru/catalog/123456789/detail.aspx</code>\n"
-        "<code>https://www.ozon.ru/product/nazvanie-123456789/</code>\n"
-        "<code>https://aliexpress.ru/item/1005001234567890.html</code>\n"
-        "<code>123456789</code>  ← артикул WB"
+        "🔗 <b>Отправь ссылку на товар или его артикул:</b>\n\n"
+        "Пример ссылки:\n"
+        "<code>https://www.wildberries.ru/catalog/123456789/detail.aspx</code>\n\n"
+        "Или просто артикул:\n"
+        "<code>123456789</code>"
     )
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_main_kb())
@@ -55,24 +50,12 @@ async def process_item_url(message: Message, state: FSMContext, db_user: User) -
     detected = detect_platform(message.text.strip())
     if not detected:
         await message.answer(
-            "❌ Не удалось распознать ссылку.\n\n"
-            "Поддерживаются ссылки Wildberries, Ozon, AliExpress или артикул WB (число).",
+            "❌ Не удалось распознать ссылку или артикул. Попробуй ещё раз.",
             reply_markup=back_to_main_kb(),
         )
         return
 
     platform, article = detected
-
-    # Предупреждение для экспериментальных платформ
-    if platform in ("ozon", "ali"):
-        pname = PLATFORM_NAME.get(platform, platform)
-        await message.answer(
-            f"⚠️ <b>Внимание:</b> поддержка {pname} — экспериментальная.\n"
-            f"Работа может быть нестабильной: иногда товар не находится или цена определяется неверно.\n"
-            f"Wildberries работает надёжно через официальное API.\n\n"
-            f"⏳ Пробую загрузить товар…",
-            parse_mode="HTML",
-        )
 
     # Проверяем лимит
     async with AsyncSessionLocal() as session:
@@ -105,8 +88,7 @@ async def process_item_url(message: Message, state: FSMContext, db_user: User) -
 
     emoji = PLATFORM_EMOJI.get(platform, "")
     pname = PLATFORM_NAME.get(platform, platform)
-    if platform not in ("ozon", "ali"):
-        await message.answer(f"⏳ Загружаю товар с {emoji} {pname}...")
+    await message.answer(f"⏳ Загружаю товар с {emoji} {pname}...")
 
     product = await fetch_product(article, platform)
     if product is None:

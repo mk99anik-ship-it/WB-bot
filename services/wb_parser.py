@@ -1,7 +1,122 @@
 import re
-import json
 import aiohttp
 from dataclasses import dataclass
+
+PLATFORM_WB = "wb"
+PLATFORM_NAME = {PLATFORM_WB: "Wildberries"}
+PLATFORM_EMOJI = {PLATFORM_WB: "🟣"}
+
+_HEADERS_BROWSER = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8",
+}
+
+
+@dataclass
+class Product:
+    article: str
+    name: str
+    price: float
+    url: str
+    platform: str = PLATFORM_WB
+    price_original: float | None = None
+    brand: str = ""
+    supplier: str = ""
+    supplier_rating: float = 0.0
+    rating: float = 0.0
+    feedbacks: int = 0
+    qty: int = 0
+
+
+# Backward-compat alias
+WBProduct = Product
+
+
+def product_url(article: str, platform: str = PLATFORM_WB) -> str:
+    return f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
+
+
+def detect_platform(text: str) -> tuple[str, str] | None:
+    """Detects WB product from URL or bare article number."""
+    text = text.strip()
+    m = re.search(r"wildberries\.ru/catalog/(\d+)", text)
+    if m:
+        return (PLATFORM_WB, m.group(1))
+    if re.fullmatch(r"\d{5,12}", text):
+        return (PLATFORM_WB, text)
+    return None
+
+
+def extract_article(text: str) -> str | None:
+    result = detect_platform(text)
+    if result:
+        return result[1]
+    return None
+
+
+async def fetch_product(article_or_id: str, platform: str = PLATFORM_WB) -> Product | None:
+    return await _fetch_wb(article_or_id)
+
+
+async def _fetch_wb(article: str) -> Product | None:
+    url = (
+        f"https://card.wb.ru/cards/v4/detail"
+        f"?appType=1&curr=rub&dest=-1257786&nm={article}"
+    )
+    headers = {
+        **_HEADERS_BROWSER,
+        "Accept": "*/*",
+        "Origin": "https://www.wildberries.ru",
+        "Referer": "https://www.wildberries.ru/",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+
+        products = data.get("products", [])
+        if not products:
+            return None
+
+        p = products[0]
+        sizes = p.get("sizes", [])
+        price_kopecks = None
+        price_basic_kopecks = None
+        total_qty = 0
+        for size in sizes:
+            price_info = size.get("price", {})
+            if not price_kopecks:
+                price_kopecks = price_info.get("product") or price_info.get("basic")
+            if not price_basic_kopecks:
+                price_basic_kopecks = price_info.get("basic")
+            for stock in size.get("stocks", []):
+                total_qty += int(stock.get("qty", 0))
+
+        if not price_kopecks:
+            return None
+
+        return Product(
+            article=article,
+            name=p.get("name", "Неизвестный товар"),
+            price=price_kopecks / 100,
+            url=f"https://www.wildberries.ru/catalog/{article}/detail.aspx",
+            platform=PLATFORM_WB,
+            price_original=price_basic_kopecks / 100 if price_basic_kopecks else None,
+            brand=p.get("brand", ""),
+            supplier=p.get("supplier", ""),
+            supplier_rating=float(p.get("supplierRating", 0) or 0),
+            rating=float(p.get("rating", 0) or 0),
+            feedbacks=int(p.get("feedbacks", 0) or 0),
+            qty=total_qty,
+        )
+    except Exception:
+        return None
 
 PLATFORM_WB = "wb"
 PLATFORM_OZON = "ozon"
